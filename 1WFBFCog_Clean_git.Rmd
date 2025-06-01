@@ -1,0 +1,373 @@
+---
+title: "WF/BF Data Cleaning"
+author: "Yujing"
+date: "2024-03-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(plyr) #combine datasets
+library(purrr) #map()
+library(Hmisc) #extract variable labels: label(data$variable)
+```
+
+```{r Import dataset}
+dat <- haven::read_sav('/Users/yujinglin/Downloads/dat.sav')
+
+WFBF_raw <- dat[ dat$exclude1 == 0, ] #1=Y, 0=N
+
+dim(WFBF_raw) # 26040 675
+
+```
+
+```{r create sex dummies}
+WFBF_raw <- WFBF_raw %>%
+  mutate(
+    sex1_label = recode(sex1, `0` = "F", `1` = "M"),
+    sex2_label = recode(sex2, `0` = "F", `1` = "M")
+  )
+
+# when I do the pair sum, pair diff, etc. it is always twin1 minus twin 2
+
+# a 3-level FSS, MSS, OS dummy -- the order of female vs male does not matter
+WFBF_raw$sex1_label_for_pairmeansum <- with(WFBF_raw, ifelse(sex1 == 1 & sex2 == 1, "MSS",
+                                    ifelse(sex1 == 0 & sex2 == 0, "FSS", "OS")))
+
+# a 4-level MM, FF, MF, FM factor for pair difference -- the order matters, esp for phenotypes like height which display sex differences (e.g., a girl may have a higher PGS for height compared to her male sibling, but she is likely to be shorter)
+WFBF_raw$sex1_label_for_pairdiff <- with(WFBF_raw, ifelse(sex1 == 1 & sex2 == 1, "MM",
+                                    ifelse(sex1 == 0 & sex2 == 0, "FF",
+                                    ifelse(sex1 == 1 & sex2 == 0, "MF", "FM"))))
+
+WFBF <- WFBF_raw
+dim(WFBF) # 26040 679 ( + 4 additional sex dummies)
+```
+
+
+---
+Step 1: Regress the twins' variables against age
+---
+
+A note from Kaili's 2016 paper: MZ twins have the same sex and all twins correlate perfectly for age, if not correcting age & sex, the estimates will inflate in C
+
+```{r Age 7}
+
+WFBF[, c("gt2ac1", "gcg1", "gcl1", "gcn1", "gbmi1", "ghtcm1")] <- apply(
+  WFBF_raw[, c("gt2ac1", "gcg1", "gcl1", "gcn1", "gbmi1", "ghtcm1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$gtqage1, na.action=na.exclude))})
+# "gt2ac1": maths + English combined composite 
+# "gcg1": g 
+# "gcl1": g-verbal
+# "gcn1": g-nonverbal
+# "gbmi1": bmi
+# "ghtcm1": height
+# NOT include: separated subject scores, "gtmat1", "gteng1"
+
+WFBF[, c("gt2ac2", "gcg2", "gcl2", "gcn2", "gbmi2", "ghtcm2")] <- apply(
+  WFBF_raw[, c("gt2ac2", "gcg2", "gcl2", "gcn2", "gbmi2", "ghtcm2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$gtqage2, na.action=na.exclude))})
+
+```
+
+```{r Age 9}
+
+WFBF[, c("it3ac1", "icg1", "icvb1", "icnv1")] <- apply(
+  WFBF_raw[, c("it3ac1", "icg1", "icvb1", "icnv1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$itage1, na.action=na.exclude))})
+
+WFBF[, c("it3ac2", "icg2", "icvb2", "icnv2")] <- apply(
+  WFBF_raw[, c("it3ac2", "icg2", "icvb2", "icnv2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$itage2, na.action=na.exclude))})
+
+```
+
+```{r Age 10}
+
+WFBF[, c("jt3ac1", "jcg1", "jcvb1", "jcnv1")] <- apply(
+  WFBF_raw[, c("jt3ac1", "jcg1", "jcvb1", "jcnv1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$jtqage1, na.action=na.exclude))})
+
+WFBF[, c("jt3ac2", "jcg2", "jcvb2", "jcnv2")] <- apply(
+  WFBF_raw[, c("jt3ac2", "jcg2", "jcvb2", "jcnv2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$jtqage2, na.action=na.exclude))})
+
+```
+
+```{r Age 12}
+
+# create the verbal composite from language & reading abilities
+df_verbal12T1 <- dplyr::select(WFBF_raw, id_twin, ltotota1, lfltot1, lintot1, lpitota1, lgotota1, lyntot1, ltowt1)
+df_verbal12T2 <- dplyr::select(WFBF_raw, id_twin, ltotota2, lfltot2, lintot2, lpitota2, lgotota2, lyntot2, ltowt2)
+df_nonverbal12T1 <- dplyr::select(WFBF_raw, id_twin, lma1tot1, lma2tot1, lma3tot1)
+df_nonverbal12T2 <- dplyr::select(WFBF_raw, id_twin, lma1tot2, lma2tot2, lma3tot2)
+
+df_list_cognitive12 <- list(df_verbal12T1, df_verbal12T2, df_nonverbal12T1, df_nonverbal12T2)
+
+score_list_cognitive12 <- map(df_list_cognitive12, ~ {
+  n_missing<-apply(.[-1], 1, function(x) sum(is.na(x)))>((ncol(.)-1)/2) # -1 means to exclude id_twin
+  row_sums<-apply(.[!n_missing, -1], 1, mean, na.rm=TRUE)*(ncol(.)-1)
+  cbind(.[!n_missing, 1], row_sums) # keep the row_sums results and the first column of ID for each dataframe
+})
+
+df_cognitive12 <- score_list_cognitive12 %>% reduce(full_join, by = "id_twin")
+variable_name_list <- c("id_twin", "lverbal12T1", "lverbal12T2", "lnonverbal12T1", "lnonverbal12T2")
+colnames(df_cognitive12)<-variable_name_list
+
+WFBF_raw <- WFBF_raw %>% full_join(df_cognitive12)
+
+WFBF[, c("lt3ac1", "lcg1", "lcvb1", "lcnv1", "lverbal12T1", "lnonverbal12T1", "lbmi1", "lchtcm1")] <- apply(
+  WFBF_raw[, c("lt3ac1", "lcg1", "lcvb1", "lcnv1", "lverbal12T1", "lnonverbal12T1", "lbmi1", "lchtcm1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$ltqage1, na.action=na.exclude))})
+
+WFBF[, c("lt3ac2", "lcg2", "lcvb2", "lcnv2", "lverbal12T2", "lnonverbal12T2", "lbmi2", "lchtcm2")] <- apply(
+  WFBF_raw[, c("lt3ac2", "lcg2", "lcvb2", "lcnv2", "lverbal12T2", "lnonverbal12T2", "lbmi2", "lchtcm2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$ltqage2, na.action=na.exclude))})
+
+```
+
+```{r Age 14}
+
+WFBF[, c("ncbmi1", "nchtcm1")] <- apply(
+  WFBF_raw[, c("ncbmi1", "nchtcm1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$ncqage1, na.action=na.exclude))})
+
+WFBF[, c("ncbmi2", "nchtcm2")] <- apply(
+  WFBF_raw[, c("ncbmi2", "nchtcm2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$ncqage2, na.action=na.exclude))})
+
+```
+
+```{r Age 16}
+
+# we have the age for GCSE and the age for web test
+complete_cases <- !is.na(WFBF_raw$pcexgcsecoregrdm1) &
+                  !is.na(WFBF_raw$pcexgcseage1) &
+                  !is.na(WFBF_raw$sex1)
+
+WFBF[complete_cases, "pcexgcsecoregrdm1"] <- rstandard(
+  lm(pcexgcsecoregrdm1 ~ pcexgcseage1 + sex1,
+     data = WFBF_raw[complete_cases, ])
+)
+
+WFBF[!complete_cases, "pcexgcsecoregrdm1"] <- NA
+# "pcexgcsematgrdm1", "pcexgcseenggrdm1", "pcexgcsescigrdm1": maths, English, science GCSE grades
+
+WFBF[, c("pcg1", "pcvctota1", "pcrvtota1", "pcbmi1", "pcqdhtcm1")] <- apply(
+  WFBF_raw[, c("pcg1", "pcvctota1", "pcrvtota1", "pcbmi1", "pcqdhtcm1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$pcwebage1, na.action=na.exclude))})
+
+complete_cases2 <- !is.na(WFBF_raw$pcexgcsecoregrdm2) &
+                  !is.na(WFBF_raw$pcexgcseage2) &
+                  !is.na(WFBF_raw$sex2)
+
+WFBF[complete_cases2, "pcexgcsecoregrdm2"] <- rstandard(
+  lm(pcexgcsecoregrdm2 ~ pcexgcseage2 + sex2,
+     data = WFBF_raw[complete_cases2, ])
+)
+
+WFBF[!complete_cases2, "pcexgcsecoregrdm2"] <- NA
+
+WFBF[, c("pcg2", "pcvctota2", "pcrvtota2", "pcbmi2", "pcqdhtcm2")] <- apply(
+  WFBF_raw[, c("pcg2", "pcvctota2", "pcrvtota2", "pcbmi2", "pcqdhtcm2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$pcwebage2, na.action=na.exclude))})
+
+```
+
+```{r Age 18}
+
+# Note, it is called a-level enrolment but in reality it is a/as-level grade availability 
+# a-level composite: based on grade availability of A- and AS-level
+
+NumberGradesReport_a_level_enrolment_conversion <- function(data, a_level_reported, as_level_reported, new_item) {
+  data[[new_item]] <- ifelse(
+    !is.na(data[[a_level_reported]]),  # Check if a_level_reported is not NA
+    ifelse(data[[a_level_reported]] %in% 1:6, 1,  # If a_level_reported is between 1 and 6, set to 1
+           ifelse(data[[a_level_reported]] == 0,
+                  ifelse(data[[as_level_reported]] %in% 1:5, 1,  # If as_level_reported is between 1 and 5, set to 1
+                         ifelse(data[[as_level_reported]] == 0, 0, NA)),  # If as_level_reported is 0, set to 0, else NA
+                  NA)),  # Else, set to NA if a_level_reported is 0 and as_level_reported is NA
+    ifelse(!is.na(data[[as_level_reported]]),
+           ifelse(data[[as_level_reported]] %in% 1:5, 1,  # If as_level_reported is between 1 and 5, set to 1
+                  ifelse(data[[as_level_reported]] == 0, 0, NA)),  # If as_level_reported is 0, set to 0
+           NA)  # If both a_level_reported and as_level_reported are NA, set new_item to NA
+  )
+  return(data)
+}
+
+WFBF_raw <- NumberGradesReport_a_level_enrolment_conversion(WFBF_raw, "rcqaln1", "rcqasn1", "ra_level_enrol1")
+WFBF_raw <- NumberGradesReport_a_level_enrolment_conversion(WFBF_raw, "rcqaln2", "rcqasn2", "ra_level_enrol2")
+
+WFBF <- NumberGradesReport_a_level_enrolment_conversion(WFBF, "rcqaln1", "rcqasn1", "ra_level_enrol1")
+WFBF <- NumberGradesReport_a_level_enrolment_conversion(WFBF, "rcqaln2", "rcqasn2", "ra_level_enrol2")
+
+# count(WFBF_raw$ra_level_enrolNumberReport1) # 1=3964, 0=2883, NA=6176
+# count(WFBF_raw$ra_level_enrolNumberReport2) # 1=3976, 0=2877, NA=6170
+
+
+
+WFBF[, c("rcqalgrdm1", "rcqalsgrdm1")] <- apply(
+  WFBF_raw[, c("rcqalgrdm1", "rcqalsgrdm1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$rcqalage1, na.action=na.exclude))})
+# "ra_level_enrol1": a-level enrolment (binary--no regress)
+# "rcqalgrdm1", "rcqalsgrdm1": mean grade for full A-level/AS-level
+
+WFBF[, c("rcqalgrdm2", "rcqalsgrdm2")] <- apply(
+  WFBF_raw[, c("rcqalgrdm2", "rcqalsgrdm2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$rcqalage2, na.action=na.exclude))})
+
+
+
+"rcqhe1" # Entering university or HE (twin qnr at 18), 1Y 0N (binary--no regress)
+
+```
+
+```{r Age 21}
+
+WFBF[, c("u1cdegr11", "u1cedat1", "u1cbmi1", "u1chtcm1")] <- apply(
+  WFBF_raw[, c("u1cdegr11", "u1cedat1", "u1cbmi1", "u1chtcm1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$u1cage1, na.action=na.exclude))})
+# university grade("u1cdegr11/2"): range=[2, 5]; 2=third or pass-lowest grade, 3=lower second, 4=upper second, 5=highest grade
+# [removed at 21] current highest level of qualification("u1chqualp1"): range=[1, 11]; cannot find the corresponding levels to the numbers; but we have the same variable at age 26 for highest level, so we are safe to delete the one collected at age 21
+# twin edu attainment composite("u1cedat1"): standardised 
+
+WFBF[, c("u1cdegr12", "u1cedat2", "u1cbmi2", "u1chtcm2")] <- apply(
+  WFBF_raw[, c("u1cdegr12", "u1cedat2", "u1cbmi2", "u1chtcm2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$u1cage2, na.action=na.exclude))})
+
+WFBF[, c("ucgt1", "ucgvbt1", "ucgnvt1")] <- apply(
+  WFBF_raw[, c("ucgt1", "ucgvbt1", "ucgnvt1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$ucgage1, na.action=na.exclude))})
+
+WFBF[, c("ucgt2", "ucgvbt2", "ucgnvt2")] <- apply(
+  WFBF_raw[, c("ucgt2", "ucgvbt2", "ucgnvt2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$ucgage2, na.action=na.exclude))})
+
+```
+
+```{r Age 26 Cognitive, EA}
+
+edu_attain_collapse <- function(data, EA26, EA21, new_item) {
+  data[[new_item]] <- ifelse(
+    !is.na(data[[EA26]]),
+    case_when(
+      data[[EA26]] %in% 1 ~ NA, # no qualification
+      data[[EA26]] %in% c(2, 3, 4) ~ 10, # GCSE
+      data[[EA26]] %in% c(5, 6) ~ 12, # A-level
+      data[[EA26]] %in% c(7, 8) ~ 14, # some higher edu
+      data[[EA26]] == 9 ~ 15, # bachelor 
+      data[[EA26]] == 10 ~ 16, # master
+      data[[EA26]] == 11 ~ 20 # doctoral
+    ),
+    ifelse( # For those who are NAs for EA26, we will check if their responses are available in EA21
+      !is.na(data[[EA21]]), 
+      case_when(
+        data[[EA21]] %in% 1 ~ NA,
+        data[[EA21]] %in% c(2, 3, 4) ~ 10,
+        data[[EA21]] %in% c(5, 6) ~ 12,
+        data[[EA21]] %in% c(7, 8) ~ 14,
+        data[[EA21]] == 9 ~ 15,
+        data[[EA21]] == 10 ~ 16,
+        data[[EA21]] == 11 ~ 20
+      ),
+      NA  # Only those who are NAs in both EA26 and EA21 will be NAs
+    )
+  )
+  return(data)
+}
+
+WFBF_raw <- edu_attain_collapse(WFBF_raw, "zmhhqual1", "u1chqualp1", "zEA1")
+WFBF_raw <- edu_attain_collapse(WFBF_raw, "zmhhqual2", "u1chqualp2", "zEA2")
+
+# briefly count the N of those whose age 26 EA is unavailable and we have to go back to age 21
+WFBF_raw %>%
+  dplyr::filter(selectunpaired==1, !is.na(zmhhqual1) | !is.na(u1chqualp1)) %>%
+  dplyr::summarise(count = dplyr::n())
+# 4218: this should match approx the N for unrelated pop
+
+WFBF_raw %>%
+  dplyr::filter(selectunpaired==1, # zygos==2, 
+                is.na(zmhhqual1) & !is.na(u1chqualp1)) %>%
+  dplyr::summarise(count = dplyr::n())
+# 917 twin 1 individuals whose EA age 26 is not available but age 21 EA is 
+# 591 for DZ twin 1 only
+
+WFBF_raw %>%
+  dplyr::filter(selectunpaired==1, # zygos==2, 
+                is.na(zmhhqual2) & !is.na(u1chqualp2)) %>%
+  dplyr::summarise(count = dplyr::n())
+# 948 twin 2 individuals whose EA age 26 is not available but age 21 EA is 
+# 602 for DZ twin 2 only
+
+# before: highest qualification("zmhhqual1"): 1=no qualifications, 2=GCSEs grades D-G, 3=1-4 GCSEs grades A-C, 4=5+ GCSEs grades A-C, 5=1 A-level, 6=2+ A-levels, 7=HNC/CertEd, 8=foundation degree, 9=bachelor degree, 10=masters degree, 11=doctoral degree
+# collapsed the grade
+
+# EA collapsed composite: 1=no qualifications, 2=GCSE, 3=a-level, 4=some higher education, 5=bachelor, 6=master, 7=doctoral 
+
+# EA -> years of schooling
+count(WFBF_raw$zEA1==20) # no qualifications N=48 -> NAs
+# GCSE=10 (N=990), A/AS-level=12 (N=1638), some HE=14 (N=1185), bachelor=15 (N=4622), master=16 (N=2120), doctoral=20 (N=78)
+
+
+
+# check:
+# count(WFBF_raw$zmhhqual1)
+# count(WFBF_raw$u1chqualp1)
+# count(WFBF_raw$zEA1)
+# count(WFBF_raw$zmhhqual2)
+# count(WFBF_raw$zEA2)
+# NAs->NAs, 1->1, 2+3+4->2, 5+6->3, 7+8->4, 9->5, 10->6, 11->7
+
+
+
+WFBF[, c("zEA1", "zmhbmi1", "zmhheight1")] <- apply(
+  WFBF_raw[, c("zEA1", "zmhbmi1", "zmhheight1")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$zmhage1, na.action=na.exclude))})
+
+WFBF[, c("zEA2", "zmhbmi2", "zmhheight2")] <- apply(
+  WFBF_raw[, c("zEA2", "zmhbmi2", "zmhheight2")], 
+  2, function(x){rstandard(lm(x ~ WFBF_raw$zmhage2, na.action=na.exclude))})
+
+```
+
+
+
+```{r Apply subset to the raw and clean data files}
+
+# keep a copy for the raw data and cleaned data for the entire sample 
+WFBF_raw_full <- WFBF_raw 
+WFBF_full <- WFBF
+
+# take out one twin per pair
+WFBF_raw <- subset(WFBF_raw_full, random==0)
+WFBF <- subset(WFBF_full, random==0)
+# If change to random==1, need to change the PGS diff calculations to random==1 minus random==0
+
+# among those who is genotyped, take out an unrelated sample (rm DZ co-twin)
+WFBF_raw_selectunpaired <- subset(WFBF_raw_full, selectunpaired==1) 
+WFBF_selectunpaired <- subset(WFBF_full, selectunpaired==1)
+
+
+
+# Make sure these are matched
+dim(WFBF_full) # 26040*687
+dim(WFBF) # 13004*687
+dim(WFBF_selectunpaired) # 6973*687
+
+```
+
+
+```{r Save the data files}
+
+outFileStem <- '/Users/yujinglin/Desktop/WF&BF/Data/'
+
+write.csv(WFBF_raw_full, paste(outFileStem, "WFBF_raw_full.csv", sep=""), row.names = FALSE) # no filter except for the std exclude
+write.csv(WFBF_full, paste(outFileStem, "WFBF_full.csv", sep=""), row.names = FALSE) # no filter except for the std exclude
+
+write.csv(WFBF_raw, paste(outFileStem, "WFBF_raw.csv", sep=""), row.names = FALSE) # random == 0
+write.csv(WFBF, paste(outFileStem, "WFBF.csv", sep=""), row.names = FALSE) # random == 0
+
+write.csv(WFBF_raw_selectunpaired, paste(outFileStem, "WFBF_raw_selectunpaired.csv", sep=""), row.names = FALSE) # selectunpaired == 1
+write.csv(WFBF_selectunpaired, paste(outFileStem, "WFBF_selectunpaired.csv", sep=""), row.names = FALSE) # selectunpaired == 1
+
+```
+

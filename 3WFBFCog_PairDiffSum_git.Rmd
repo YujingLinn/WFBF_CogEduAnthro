@@ -1,0 +1,240 @@
+---
+title: "Trait and PGS Pair Diff and Pair Sum"
+author: "Yujing"
+date: "07 May, 2024"
+output: html_document
+---
+
+```{r Load Libraries}
+
+# rm(list=ls(all=TRUE))
+
+library(dplyr)
+library(scales) # to convert numbers to percentages
+library(tidyr)
+library(Hmisc) #extract variable labels: label(data$variable)
+library(data.table)
+```
+
+
+
+```{r Obtain Data}
+
+WFBF_raw_full <- read.csv('/Users/yujinglin/Desktop/WF&BF/Data/WFBF_raw_full.csv')
+
+dat <- WFBF_raw_full # the data should be wide data
+dim(dat) # 26040 obs * 687 variables
+
+dat_pair <- subset(dat, select = c("id_twin", "id_fam", "twin", "random", "cohort", "sex1", "sex2", "zygos", "sexzyg", "x3zygos", "selectunpaired",
+                                   "sex1_label", "sex2_label", "sex1_label_for_pairmeansum", "sex1_label_for_pairdiff")) 
+ # from id to x3zygos + selectunpaired + 4 sex dummies
+# create the base of the target dataset dat_pair
+# pair diff and pair sum of traits and PGS will be gradually added to this dataset 
+# then, this dataset will be used for trait~PGS regressions 
+```
+
+
+
+```{r Full_List_Vars 52}
+
+Full_List_Vars <- c( "gt2ac", "gcg", "gcl", "gcn", "gbmi", "ghtcm", # age 7
+                     "it3ac", "icg", "icvb", "icnv", # 9
+                     "jt3ac", "jcg", "jcvb", "jcnv", # 10
+                     "lt3ac", "lcg", "lverbal12T", "lnonverbal12T", "lbmi", "lchtcm", # 12 # "lcvb", "lcnv", 
+                     "ncbmi", "nchtcm", # 14
+                     "pcexgcsecoregrdm", "pcg", "pcvctota", "pcrvtota", "pcbmi", "pcqdhtcm", # 16
+                     "ra_level_enrol", "rcqalgrdm", "rcqhe", # 18 # "rcqalsgrdm", 
+                     "u1cdegr1", "u1cbmi", "u1chtcm", "ucgt", "ucgvbt", "ucgnvt", # 21 # "u1cedat", 
+                     "zEA", "zmhbmi", "zmhheight" # 26
+)
+
+length(Full_List_Vars) # 40
+
+```
+
+
+
+---
+Step 1a: Creating trait pair diff, sum, mean, mean diff
+---
+
+```{r Trait Pair Diff, Sum, Mean Diff}
+
+# for the twin whose co-twin trait data not available, the result will be NA, so won't effect the corr coef
+
+for (currentVar in Full_List_Vars) {
+
+  selVars <- paste(currentVar, c(1,2), sep="")
+  
+  # trait diff
+  trait_diff <- dat[[selVars[1]]] - dat[[selVars[2]]] # didn't use abs() b/c PGS diff will also be w/o absolute values (both trait diff and PGS diff will have the +/- signs)
+  name_trait_diff <- paste(currentVar, "trait_diff", sep="_")
+  dat_pair[[name_trait_diff]] <- trait_diff
+  
+  # trait sum
+  trait_sum <- dat[[selVars[1]]] + dat[[selVars[2]]]
+  name_trait_sum <- paste(currentVar, "trait_sum", sep="_")
+  dat_pair[[name_trait_sum]] <- trait_sum
+  
+  # trait mean
+  trait_mean <- (dat[[selVars[1]]] + dat[[selVars[2]]])/2
+  name_trait_mean <- paste(currentVar, "trait_mean", sep="_")
+  dat_pair[[name_trait_mean]] <- trait_mean
+  
+  # trait mean diff: each DZ trait minus trait mean (i.e., each twin's deviation from pair mean)
+  trait_mean_diff <- dat[[selVars[1]]] - trait_mean
+  name_trait_mean_diff <- paste(currentVar, "trait_mean_diff", sep="_")
+  dat_pair[[name_trait_mean_diff]] <- trait_mean_diff
+
+}
+
+```
+
+```{r validate Trait Pair Diff and Sum, eval=FALSE}
+
+# how to check: 
+
+dat$gt2ac1[95] - dat$gt2ac2[95] # twin 1 - twin 2: original dataset
+dat_pair$gt2ac_trait_diff[95] # twin 1 - twin 2: new dataset
+# =-0.0698267
+
+dat$gt2ac1[96] - dat$gt2ac2[96] # twin 2 - twin 1: original dataset
+dat_pair$gt2ac_trait_diff[96] # twin 2 - twin 1: new dataset
+# =-0.0698267
+
+dat$gt2ac1[95] + dat$gt2ac2[95] # twin 1 + twin 2: original dataset
+dat_pair$gt2ac_trait_sum[95] # twin 1 + twin 2: new dataset
+# =-7.768734
+
+# if change the dat into WFBF_raw_full, the results will follow exactly what we would expect (have already checked--indicating the function is good)
+
+```
+
+
+
+---
+Step 1b: Creating PGS pair diff and sum
+---
+
+```{r Full_List_PGS 17}
+
+Full_List_PGS <- c("EA4_no23andme_Okbay2022", "IQ_Savage2018_FRCT1", 
+                   "ChildhoodBMI_Vogelezang2020", "BMI_Giant2018", "Height_Yengo2022")
+
+length(Full_List_PGS) # 5
+
+```
+
+```{r Make all twin PGS double-entry and do pair mean, deviation from pair mean}
+
+library(foreach)
+
+df <- WFBF_raw_full # the data should be double-entry, age- and sex-regressed data with all participants except for those in the std TEDS exclusion criteria; b/c we need it to double-enter PGS, both twins and co-twins are needed
+dim(df) # 26097 obs * 681 variables
+
+dat <- df %>%
+  group_by(id_fam) %>%
+  mutate_at(vars(Full_List_PGS), function(x){
+    if (n() == 2){
+      rev(x)
+    } else {
+      NA
+    }
+  }) %>%
+  ungroup() %>%
+  dplyr::select(Full_List_PGS) %>%
+  rename_all(funs(paste0(., "2"))) %>% # change names for twin 2 (suffix of 2)
+  cbind(df, .)
+
+# change names for twin 1 (suffix of 1)
+newnames <- paste0(Full_List_PGS, "1")
+dat <- dat %>% rename_at(vars(Full_List_PGS), ~ newnames)
+
+for (currentPGS in Full_List_PGS) { # even though I have created new PGS variable names based on double-entry convention, I should still use the original names, b/c I will create the selPGS again (in case, I don't need to create a full variable list)
+  #currentPGS <- Full_List_PGS[[1]]
+  selPGS <- paste(currentPGS, c(1,2), sep="")
+  
+  # PGS diff
+  PGS_diff <- dat[[selPGS[1]]] - dat[[selPGS[2]]] # didn't use abs() b/c trait diff didn't use
+  name_PGS_diff <- paste(currentPGS, "PGS_diff", sep="_")
+  dat_pair[[name_PGS_diff]] <- PGS_diff
+  
+  # PGS sum: this is a bit special, b/c for MZ twins, their pair sums will be double the PGS of one MZ twin
+  # If simply use selPGS1+selPGS2, we only have PGS for one MZ twin and all the sums will be NA for MZ twins 
+  
+  PGS_sum <- ifelse(dat$zygos == 1, 
+                    ifelse(!is.na(dat[[selPGS[1]]]), 2 * dat[[selPGS[1]]], 
+                           ifelse(!is.na(dat[[selPGS[2]]]), 2 * dat[[selPGS[2]]], NA)),
+                    ifelse(dat$zygos == 2, 
+                           ifelse(!is.na(dat[[selPGS[1]]]) & !is.na(dat[[selPGS[2]]]), 
+                                  dat[[selPGS[1]]] + dat[[selPGS[2]]], NA),
+                           NA))
+  
+  name_PGS_sum <- paste(currentPGS, "PGS_sum", sep="_")
+  dat_pair[[name_PGS_sum]] <- PGS_sum
+  
+  # PGS mean
+  PGS_mean <- PGS_sum/2
+  name_PGS_mean <- paste(currentPGS, "PGS_mean", sep="_")
+  dat_pair[[name_PGS_mean]] <- PGS_mean
+  
+  # PGS mean diff: each DZ minus PGS mean
+  # b/c the dataset "dat" is double-entry, no need to do both 
+  PGS_mean_diff <- dat[[selPGS[1]]] - (PGS_sum/2)
+  name_PGS_mean_diff <- paste(currentPGS, "PGS_mean_diff", sep="_")
+  dat_pair[[name_PGS_mean_diff]] <- PGS_mean_diff
+  
+}
+
+```
+
+```{r validation, eval=FALSE}
+# how to check: 
+dat$IQ_Savage2018_FRCT11[dat$id_twin == 11781] - dat$IQ_Savage2018_FRCT11[dat$id_twin == 11782] # 0.2347197
+dat_pair$IQ_Savage2018_FRCT1_PGS_diff[dat$id_twin == 11781] # 0.2347197
+dat_pair$IQ_Savage2018_FRCT1_PGS_diff[dat$id_twin == 11782] # -0.2347197
+
+```
+
+
+
+
+
+```{r add cleaned trait scores back to dat_pair}
+
+# cleaned trait scores need to be added to dat_pair
+
+name_trait1 <- paste(Full_List_Vars, "1", sep="")
+name_trait2 <- paste(Full_List_Vars, "2", sep="")
+
+selected_columns <- c("id_twin", "id_fam", name_trait1, name_trait2, "rcqalage1")
+# sex and age are needed to correct for binary variables 
+
+selected_trait <- WFBF_raw_full[, selected_columns, drop = FALSE]
+
+dat_pair <- dat_pair %>% full_join(selected_trait)
+
+
+
+# put double-entry PGS from dat to dat_pair as well
+name_PGS1 <- paste(Full_List_PGS, "1", sep="")
+name_PGS2 <- paste(Full_List_PGS, "2", sep="")
+selected_PGS <- c("id_twin", "id_fam", name_PGS1, name_PGS2)
+selected_PGS <- dat[, selected_PGS, drop = FALSE]
+dat_pair <- dat_pair %>% full_join(selected_PGS)
+
+# put PCs and chip back to dat_pair as well
+PCschipbatch <- dplyr::select(WFBF_raw_full, "id_twin", "id_fam", "chiptype", "batchnumber", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10")
+dat_pair <- dat_pair %>% full_join(PCschipbatch)
+
+```
+
+```{r dat_pair finished!}
+
+dim(dat_pair) # 26040 obs. * 322 variables 
+
+outFileStem <- '/Users/yujinglin/Desktop/WF&BF/Data/'
+write.csv(dat_pair, paste(outFileStem, "dat_pair.csv", sep=""), row.names = FALSE)
+
+```
+
