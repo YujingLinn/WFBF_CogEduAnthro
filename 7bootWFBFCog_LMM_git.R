@@ -4,6 +4,7 @@
 # title: Mixed-Effects Modeling using full DZ Twins Pairs with Bootstrap & Meta-Analysis
 # author: Yujing Lin
 # date: 11th October, 2024
+# codes corresponding to publication: https://icajournal.scholasticahq.com/article/140654-polygenic-score-prediction-within-and-between-sibling-pairs-for-intelligence-cognitive-abilities-and-educational-traits-from-childhood-to-early-adul
 
 # mixed-effects model: trait ~ pop-PGS + random family effect + error
 # mixed-effects model: trait ~ WF-pair mean diff + BF-pair mean + random family effect + error
