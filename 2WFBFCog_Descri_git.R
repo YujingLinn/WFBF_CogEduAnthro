@@ -1,6 +1,7 @@
 # title: "Descriptive Statistics"
 # author: "Yujing"
 # date: "2024-04-02"
+# codes corresponding to publication: https://icajournal.scholasticahq.com/article/140654-polygenic-score-prediction-within-and-between-sibling-pairs-for-intelligence-cognitive-abilities-and-educational-traits-from-childhood-to-early-adul
 
 # Load libraries and datasets ####
 library(dplyr)
