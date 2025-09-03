@@ -1,6 +1,7 @@
 # title: Tables
 # author: Yujing Lin
 # date: 10 Oct, 2024
+# codes corresponding to publication: https://icajournal.scholasticahq.com/article/140654-polygenic-score-prediction-within-and-between-sibling-pairs-for-intelligence-cognitive-abilities-and-educational-traits-from-childhood-to-early-adul
 
 # to reproduce raw result tables: because originally I have to keep the trait domain the same for each category for weighted averages
 # but when publishing the results, I have to add the annotation for age to differentiate among the variables within the same trait domain
