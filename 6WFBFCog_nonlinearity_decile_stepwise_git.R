@@ -1,6 +1,7 @@
 # title: Extreme Analyses: nonlinearity test and stepwise regressions
 # author: Yujing Lin
 # date: 4 Sept, 2024
+# codes corresponding to publication: https://icajournal.scholasticahq.com/article/140654-polygenic-score-prediction-within-and-between-sibling-pairs-for-intelligence-cognitive-abilities-and-educational-traits-from-childhood-to-early-adul
 
 # excluding dichotomous traits: squared term for 1 will be 1; if pair diff, for example, squared term for -1 will be 1, which is very strange
 # no bootstrapping needed
