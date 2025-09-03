@@ -4,6 +4,7 @@
 # title: Simple Regression Approach with Bootstrap & Meta-Analysis
 # author: Yujing Lin
 # date: 6th October, 2024
+# codes corresponding to publication: https://icajournal.scholasticahq.com/article/140654-polygenic-score-prediction-within-and-between-sibling-pairs-for-intelligence-cognitive-abilities-and-educational-traits-from-childhood-to-early-adul
 
 # instruction: this is the simple regression approach with bootstrap and meta-analysis
 
