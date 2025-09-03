@@ -4,6 +4,7 @@
 # title: Regression_adjSES with Bootstrap & Weighted Averages 
 # author: Yujing Lin
 # date: 14th October, 2024
+# codes corresponding to publication: https://icajournal.scholasticahq.com/article/140654-polygenic-score-prediction-within-and-between-sibling-pairs-for-intelligence-cognitive-abilities-and-educational-traits-from-childhood-to-early-adul
 
 # Family SES 
 #"ases" # "SES composite scale (1st Contact), standardised"
